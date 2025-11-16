@@ -62,15 +62,19 @@
       color: #d32f2f;
     }
   </style>
+
+  <!-- 使用本地 JSZip 文件（请将 jszip.min.js 放在与本 HTML 同一目录） -->
+  <script src="jszip.min.js"></script>
 </head>
 <body>
   <h1>英语天学网题目与最简答案提取</h1>
   <div class="info">
-    上传一个包含 <code>var pageConfig = {...}</code> 的 JS 文件（例如 <code>page1.js</code>）。<br>
+    上传一个包含 <code>var pageConfig = {...}</code> 的 JS 文件（如 <code>page1.js</code>），<br>
+    或上传一个 zip / 无扩展名文件，根目录内需有 <code>page1.js</code>。<br>
     将自动提取：模仿朗读 / 故事复述 / 角色扮演（提问 &amp; 回答）的最简答案。
   </div>
 
-  <!-- 不限制文件类型，兼容 Safari -->
+  <!-- 不限制文件类型，兼容 Safari；内部自己判断是否当作 zip -->
   <input type="file" id="fileInput" />
   <div id="status"></div>
 
@@ -228,8 +232,8 @@
       html += "<table>";
       // 控制列宽：类型 & 问题 略缩短，最简答案 稍加长
       html += "<colgroup>";
-      html += '<col style="width: 14%;">';  // 类型（稍微缩短）
-      html += '<col style="width: 50%;">';  // 问题（稍微缩短）
+      html += '<col style="width: 14%;">';  // 类型
+      html += '<col style="width: 50%;">';  // 问题
       html += '<col style="width: 36%;">';  // 最简答案
       html += "</colgroup>";
 
@@ -256,6 +260,39 @@
       container.innerHTML = html;
     }
 
+    // 处理 JS 文本（无论是直接上传的 js 还是 zip 解出来的 page1.js）
+    function processJsText(text) {
+      var status = document.getElementById("status");
+      var output = document.getElementById("output");
+      output.innerHTML = "";
+      status.textContent = "";
+
+      try {
+        // 重置全局 pageConfig
+        window.pageConfig = undefined;
+
+        // 执行文件（本地自用，确保文件来源可信）
+        eval(text);
+
+        if (typeof pageConfig === "undefined") {
+          status.textContent = "文件中未找到全局变量 pageConfig。";
+          return;
+        }
+
+        var data = extractQuestions(pageConfig);
+        renderTable(data);
+        if (!data.length) {
+          status.textContent = "pageConfig 解析成功，但没有匹配的题目类型。";
+        } else {
+          status.textContent = "解析完成，共生成 " + data.length + " 行。";
+        }
+      } catch (err) {
+        console.error(err);
+        status.textContent = "解析 JS 内容时出错，请检查 page1.js 内是否包含合法的 pageConfig。";
+      }
+    }
+
+    // 处理上传的文件：根据扩展名决定是否按 zip 解压
     function handleFile(file) {
       var status = document.getElementById("status");
       var output = document.getElementById("output");
@@ -267,34 +304,47 @@
         return;
       }
 
-      var reader = new FileReader();
-      reader.onload = function (e) {
-        var text = e.target.result;
-        try {
-          // 重置全局 pageConfig
-          window.pageConfig = undefined;
+      var name = file.name || "";
+      var dotIndex = name.lastIndexOf(".");
+      var ext = (dotIndex === -1) ? "" : name.substring(dotIndex + 1).toLowerCase();
 
-          // 执行文件（本地自用，确保文件来源可信）
-          eval(text);
+      // 没有扩展名 或 扩展名为 zip -> 当作 zip 处理
+      var treatAsZip = (ext === "" || ext === "zip");
 
-          if (typeof pageConfig === "undefined") {
-            status.textContent = "文件中未找到全局变量 pageConfig。";
-            return;
-          }
-
-          var data = extractQuestions(pageConfig);
-          renderTable(data);
-          if (!data.length) {
-            status.textContent = "pageConfig 解析成功，但没有匹配的题目类型。";
-          } else {
-            status.textContent = "解析完成，共生成 " + data.length + " 行。";
-          }
-        } catch (err) {
-          console.error(err);
-          status.textContent = "解析文件时出错，请检查是否为包含 pageConfig 的 JS 文件。";
-        }
-      };
-      reader.readAsText(file, "utf-8");
+      if (treatAsZip) {
+        status.textContent = "检测到 zip 或无扩展名文件，正在尝试解压并读取根目录中的 page1.js...";
+        var reader = new FileReader();
+        reader.onload = function (e) {
+          var arrayBuffer = e.target.result;
+          JSZip.loadAsync(arrayBuffer).then(function (zip) {
+            // 只在根目录找 page1.js（不进入子目录）
+            var jsFile = zip.file("page1.js");
+            if (!jsFile) {
+              status.textContent = "解压成功，但根目录中未找到 page1.js。";
+              return;
+            }
+            jsFile.async("string").then(function (text) {
+              status.textContent = "已从 zip 中读取 page1.js，开始解析...";
+              processJsText(text);
+            }).catch(function (err) {
+              console.error(err);
+              status.textContent = "读取 zip 中的 page1.js 时出错。";
+            });
+          }).catch(function (err) {
+            console.error(err);
+            status.textContent = "解压 zip 文件失败，请确认文件为有效的 zip 压缩包。";
+          });
+        };
+        reader.readAsArrayBuffer(file);
+      } else {
+        // 普通 JS 文本文件
+        var readerText = new FileReader();
+        readerText.onload = function (e) {
+          var text = e.target.result;
+          processJsText(text);
+        };
+        readerText.readAsText(file, "utf-8");
+      }
     }
 
     document.getElementById("fileInput").addEventListener("change", function () {
