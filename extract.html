@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>英语天学网题目与最简答案提取（上传版）</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 20px;
+      line-height: 1.6;
+    }
+    h1 {
+      font-size: 28px;       /* 放大一点 */
+      margin-bottom: 10px;
+      text-align: center;    /* 居中 */
+    }
+    .info {
+      margin-bottom: 16px;
+      font-size: 14px;
+      color: #555;
+      text-align: left;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 10px;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 6px 8px;
+      vertical-align: top;
+    }
+    th {
+      background: #f5f5f5;
+      text-align: left;
+    }
+    code {
+      background: #f3f3f3;
+      padding: 2px 4px;
+      border-radius: 3px;
+    }
+    .type-tag {
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 12px;
+      display: inline-block;
+      white-space: nowrap;
+    }
+    .type-read {
+      background: #e8f5e9;
+    }
+    .type-role {
+      background: #e3f2fd;
+    }
+    .type-story {
+      background: #fff3e0;
+    }
+    #status {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #d32f2f;
+    }
+  </style>
+</head>
+<body>
+  <h1>英语天学网题目与最简答案提取</h1>
+  <div class="info">
+    上传一个包含 <code>var pageConfig = {...}</code> 的 JS 文件（例如 <code>page1.js</code>）。<br>
+    将自动提取：模仿朗读 / 故事复述 / 角色扮演（提问 &amp; 回答）的最简答案。
+  </div>
+
+  <!-- 不限制文件类型，兼容 Safari -->
+  <input type="file" id="fileInput" />
+  <div id="status"></div>
+
+  <div id="output"></div>
+
+  <script>
+    // ---------- 工具函数 ----------
+    function safeArray(x) {
+      return Array.isArray(x) ? x : [];
+    }
+
+    function htmlToText(html) {
+      if (!html) return "";
+      var div = document.createElement("div");
+      div.innerHTML = html;
+      return div.textContent.trim();
+    }
+
+    // 从 record_speak 中选“最短的一句”
+    function pickShortestContent(recordSpeak) {
+      var list = safeArray(recordSpeak);
+      if (!list.length) return "";
+      var shortest = (list[0].content || "").trim();
+      for (var i = 1; i < list.length; i++) {
+        var txt = (list[i].content || "").trim();
+        if (txt && txt.length < shortest.length) {
+          shortest = txt;
+        }
+      }
+      return shortest;
+    }
+
+    // 从 paragraph_list 中把 content_en 拼成一段原文
+    function paragraphListToText(paragraphList) {
+      var paras = safeArray(paragraphList);
+      var parts = [];
+      paras.forEach(function (p) {
+        var sentences = safeArray(p.sentences);
+        sentences.forEach(function (s) {
+          if (s.content_en) {
+            parts.push(s.content_en.trim());
+          }
+        });
+      });
+      return parts.join(" ");
+    }
+
+    // 将整数 1,2,3... 映射为 ①②③...
+    function toCircledNumber(n) {
+      var circled = ["①","②","③","④","⑤","⑥","⑦","⑧","⑨","⑩","⑪","⑫","⑬","⑭","⑮","⑯","⑰","⑱","⑲","⑳"];
+      if (n >= 1 && n <= circled.length) return circled[n-1];
+      return String(n);
+    }
+
+    // 核心：从 pageConfig 里抽取题目和最简答案
+    // 输出数据格式：
+    // { typeLabel: "...", typeClass: "type-read/type-role/type-story", question: "问题", simpleAnswer: "最简答案" }
+    function extractQuestions(pageConfig) {
+      var sliders = safeArray(pageConfig && pageConfig.sliders);
+      var result = [];
+      var roleAskIndex = 0;     // 角色扮演-提问 编号
+      var roleAnswerIndex = 0;  // 角色扮演-回答 编号
+
+      sliders.forEach(function (slider) {
+        var displayType = String(slider.displayType || "");
+        var questionList = safeArray(slider.questionList);
+
+        questionList.forEach(function (q) {
+          if (displayType === "1") {
+            // 模仿朗读：原文即最简答案
+            var text = q.question_text || "";
+            if (!text && q.record_follow_read) {
+              text = paragraphListToText(
+                (q.record_follow_read || {}).paragraph_list
+              );
+            }
+            text = (text || "").trim();
+            if (!text) return;
+
+            result.push({
+              typeLabel: "模仿朗读",
+              typeClass: "type-read",
+              question: "",
+              simpleAnswer: text
+            });
+
+          } else if (displayType === "3") {
+            // 角色扮演：翻译原文提问部分
+            var questionZh = (q.question_text || "").trim();
+            var minQuestionEn = pickShortestContent(q.record_speak);
+            if (!questionZh && !minQuestionEn) return;
+
+            roleAskIndex += 1;
+            result.push({
+              typeLabel: "角色扮演-提问" + toCircledNumber(roleAskIndex),
+              typeClass: "type-role",
+              question: questionZh,
+              simpleAnswer: minQuestionEn
+            });
+
+          } else if (displayType === "4") {
+            // 角色扮演：回答问题部分（听力问答）
+            var questionEn = htmlToText(q.analysis);       // 问题
+            var minAnswer = pickShortestContent(q.record_speak); // 最简回答
+            if (!questionEn && !minAnswer) return;
+
+            roleAnswerIndex += 1;
+            result.push({
+              typeLabel: "角色扮演-回答" + toCircledNumber(roleAnswerIndex),
+              typeClass: "type-role",
+              question: questionEn,
+              simpleAnswer: minAnswer
+            });
+
+          } else if (displayType === "5") {
+            // 故事复述：原文当最简答案
+            var storyText = "";
+            if (q.record_follow_read && q.record_follow_read.paragraph_list) {
+              storyText = paragraphListToText(
+                q.record_follow_read.paragraph_list
+              );
+            } else if (q.record_speak && q.record_speak[0]) {
+              storyText = (q.record_speak[0].content || "").trim();
+            }
+            storyText = (storyText || "").trim();
+            if (!storyText) return;
+
+            result.push({
+              typeLabel: "故事复述",
+              typeClass: "type-story",
+              question: "",
+              simpleAnswer: storyText
+            });
+
+          } else {
+            // 其他类型暂不处理
+            return;
+          }
+        });
+      });
+
+      return result;
+    }
+
+    // 渲染表格：列为【类型】【问题】【最简答案】
+    function renderTable(data) {
+      var container = document.getElementById("output");
+      if (!data.length) {
+        container.innerHTML =
+          "<p>没有在 <code>pageConfig</code> 中找到可识别的题目（模仿朗读 / 故事复述 / 角色扮演）。</p>";
+        return;
+      }
+
+      var html = "";
+      html += "<table>";
+      // 控制列宽：类型 & 问题 略缩短，最简答案 稍加长
+      html += "<colgroup>";
+      html += '<col style="width: 14%;">';  // 类型（稍微缩短）
+      html += '<col style="width: 50%;">';  // 问题（稍微缩短）
+      html += '<col style="width: 36%;">';  // 最简答案
+      html += "</colgroup>";
+
+      html += "<thead><tr>";
+      html += "<th>类型</th>";
+      html += "<th>问题</th>";
+      html += "<th>最简答案</th>";
+      html += "</tr></thead><tbody>";
+
+      data.forEach(function (item) {
+        html += "<tr>";
+        html +=
+          '<td><span class="type-tag ' +
+          item.typeClass +
+          '">' +
+          item.typeLabel +
+          "</span></td>";
+        html += "<td>" + (item.question || "") + "</td>";
+        html += "<td>" + (item.simpleAnswer || "") + "</td>";
+        html += "</tr>";
+      });
+
+      html += "</tbody></table>";
+      container.innerHTML = html;
+    }
+
+    function handleFile(file) {
+      var status = document.getElementById("status");
+      var output = document.getElementById("output");
+      output.innerHTML = "";
+      status.textContent = "";
+
+      if (!file) {
+        status.textContent = "请先选择一个文件。";
+        return;
+      }
+
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        var text = e.target.result;
+        try {
+          // 重置全局 pageConfig
+          window.pageConfig = undefined;
+
+          // 执行文件（本地自用，确保文件来源可信）
+          eval(text);
+
+          if (typeof pageConfig === "undefined") {
+            status.textContent = "文件中未找到全局变量 pageConfig。";
+            return;
+          }
+
+          var data = extractQuestions(pageConfig);
+          renderTable(data);
+          if (!data.length) {
+            status.textContent = "pageConfig 解析成功，但没有匹配的题目类型。";
+          } else {
+            status.textContent = "解析完成，共生成 " + data.length + " 行。";
+          }
+        } catch (err) {
+          console.error(err);
+          status.textContent = "解析文件时出错，请检查是否为包含 pageConfig 的 JS 文件。";
+        }
+      };
+      reader.readAsText(file, "utf-8");
+    }
+
+    document.getElementById("fileInput").addEventListener("change", function () {
+      var file = this.files[0];
+      handleFile(file);
+    });
+  </script>
+</body>
+</html>
